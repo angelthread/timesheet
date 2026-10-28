@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Timesheet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one entry bar on top, then weeks newest-first; each week = entry ledger + summary rail */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #18212b;
+  --muted: #5d6a78;
+  --line: #dbe1e7;
+  --accent: #0f766e;
+  --accent-soft: #e2f3f1;
+  --nc: #a1560b;
+  --nc-soft: #fbefdf;
+  --danger: #b42318;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Public Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-num: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --surface: #19202a; --ink: #e5eaf0; --muted: #94a1b0; --line: #2a333f;
+    --accent: #3cc0ae; --accent-soft: #163330; --nc: #f0a54a; --nc-soft: #35270f; --danger: #f27166;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --surface: #19202a; --ink: #e5eaf0; --muted: #94a1b0; --line: #2a333f;
+  --accent: #3cc0ae; --accent-soft: #163330; --nc: #f0a54a; --nc-soft: #35270f; --danger: #f27166;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.weeks { display: grid; gap: 28px; min-width: 0; }
+html { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 var(--font-body);
+  padding-block: 24px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: 1.9rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.25rem; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Top bar */
+.top { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; justify-content: space-between; }
+.top p { margin: 4px 0 0; color: var(--muted); }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 6px;
+  padding: 7px 12px; font-weight: 500; font-size: 0.88rem;
+}
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); padding: 4px 8px; }
+.btn.ghost:hover { color: var(--ink); border-color: var(--line); }
+.btn.ghost.armed { color: var(--danger); border-color: var(--danger); }
+
+/* Entry form */
+.entry {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px;
+  display: grid; gap: 12px;
+  grid-template-columns: 150px 96px minmax(140px, 1fr) minmax(180px, 2fr) auto auto;
+  align-items: end;
+}
+.entry.editing { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field input[type="text"], .field input[type="date"] {
+  width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+  padding: 7px 9px;
+}
+.field input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.check { display: flex; gap: 8px; align-items: center; padding-bottom: 8px; white-space: nowrap; font-weight: 500; }
+.check input { width: 17px; height: 17px; accent-color: var(--nc); }
+.form-actions { display: flex; gap: 8px; }
+.form-msg { grid-column: 1 / -1; margin: 0; font-size: 0.86rem; color: var(--danger); }
+.form-msg:empty { display: none; }
+@media (max-width: 860px) {
+  .entry { grid-template-columns: 1fr 1fr; }
+  .entry .wide { grid-column: 1 / -1; }
+}
+
+.banner {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+  border: 1px solid var(--nc); background: var(--nc-soft); border-radius: 8px; padding: 10px 14px;
+}
+.status { font-size: 0.82rem; color: var(--muted); }
+.status.err { color: var(--danger); }
+
+/* Week */
+.week { display: grid; gap: 12px; }
+.week-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; }
+.week-head .range { color: var(--muted); }
+.pill { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.week-body { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .week-body { grid-template-columns: minmax(0, 1fr); } }
+
+.ledger { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 620px; }
+th, td { text-align: left; padding: 8px 12px; vertical-align: top; }
+th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
+td { border-bottom: 1px solid var(--line); }
+td.desc { color: var(--muted); overflow-wrap: anywhere; }
+td.item { font-weight: 500; overflow-wrap: anywhere; }
+.r { text-align: right; }
+.c { text-align: center; }
+td.date { white-space: nowrap; color: var(--muted); }
+tr.nc td.hours { color: var(--nc); text-decoration: line-through; text-decoration-thickness: 1px; }
+tr.nc td.item::after { content: "Not charged"; margin-left: 8px; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--nc); background: var(--nc-soft); padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+td.c input { width: 17px; height: 17px; accent-color: var(--nc); cursor: pointer; }
+tr.daytotal td { background: var(--bg); font-weight: 600; font-size: 0.88rem; border-bottom: 2px solid var(--line); }
+tr.daytotal .sub { font-weight: 400; color: var(--nc); margin-left: 6px; }
+td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
+.empty { padding: 18px 16px; color: var(--muted); margin: 0; }
+
+/* Summary rail */
+.summary { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 14px; }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; align-items: end; }
+.day { display: grid; gap: 4px; justify-items: center; font-size: 0.7rem; color: var(--muted); }
+.bar { width: 100%; max-width: 26px; height: 56px; background: var(--bg); border-radius: 3px; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; }
+.bar span { display: block; width: 100%; }
+.bar .ch { background: var(--accent); }
+.bar .n { background: var(--nc); }
+.day .v { color: var(--ink); font-family: var(--font-num); font-size: 0.72rem; }
+.rows { display: grid; gap: 6px; }
+.row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.row .k { color: var(--muted); }
+.row.ncrow .num { color: var(--nc); }
+.budget { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
+.budget input {
+  width: 110px; text-align: right; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+  padding: 5px 8px; font-family: var(--font-num);
+}
+.budget input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.note { font-size: 0.78rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.note button { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; font-size: inherit; }
+.remaining { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.remaining .big { font-family: var(--font-num); font-size: 1.7rem; font-weight: 600; color: var(--accent); }
+.remaining .big.neg { color: var(--danger); }
+.hint { font-size: 0.82rem; color: var(--muted); margin: 0; }
+
+.sync-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 7px; vertical-align: 1px; }
+.sync-dot.ok { background: var(--accent); }
+.sync-dot.pending { background: var(--nc); }
+.sync-dot.err { background: var(--danger); }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 14px; }
+.panel p { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+.sync-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sync-grid input[type="password"] { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); padding: 7px 9px; }
+.sync-grid .span { grid-column: 1 / -1; }
+.sync-grid ol { margin: 0; padding-left: 1.2em; color: var(--muted); font-size: 0.88rem; display: grid; gap: 2px; }
+.sync-grid code { font-family: var(--font-num); font-size: 0.85em; }
+.sync-grid a { color: var(--accent); }
+@media (max-width: 760px) { .sync-grid { grid-template-columns: 1fr 1fr; } }
+.quiet-week { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; color: var(--muted); font-size: 0.9rem; padding: 10px 0; border-top: 1px dashed var(--line); }
+.quiet-week strong { color: var(--ink); font-weight: 600; }
+@media (prefers-reduced-motion: no-preference) { .entry, .btn { transition: border-color .15s, box-shadow .15s; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Timesheet</h1>
+      <p>Weeks run Monday to Sunday. <span id="where">Data is saved in this browser.</span> <span id="status" class="status"></span></p>
+    </div>
+    <div class="tools">
+      <button class="btn" id="sync-btn" type="button"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">Connect GitHub</span></button>
+      <button class="btn" id="dl-json" type="button">Download all (JSON)</button>
+      <button class="btn" id="dl-csv" type="button">Entries CSV</button>
+      <button class="btn" id="dl-sum" type="button">Weekly summary CSV</button>
+      <button class="btn" id="import-btn" type="button">Import JSON</button>
+      <input type="file" id="import-file" accept=".json,application/json" hidden>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <section id="sync-panel" class="panel" hidden>
+    <div>
+      <h2>GitHub storage</h2>
+      <p>Your timesheet is saved as a JSON file in a GitHub repository. Every save is a commit, so you can see and restore any earlier version. Changes are also kept in this browser, so you can keep working offline.</p>
+    </div>
+    <form id="sync-form" class="sync-grid" autocomplete="off">
+      <label class="field"><span class="label">Owner</span><input type="text" id="s-owner" placeholder="your-username" required></label>
+      <label class="field"><span class="label">Data repository</span><input type="text" id="s-repo" placeholder="timesheet-data" required></label>
+      <label class="field"><span class="label">Branch</span><input type="text" id="s-branch" placeholder="main"></label>
+      <label class="field"><span class="label">File path</span><input type="text" id="s-path" placeholder="data/timesheet.json"></label>
+      <label class="field span"><span class="label">Personal access token</span><input type="password" id="s-token" placeholder="github_pat_…" required></label>
+      <ol class="span">
+        <li>Create a <strong>private</strong> repository for the data, for example <code>timesheet-data</code>. Tick "Add a README" so it has a <code>main</code> branch.</li>
+        <li>Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a>. Under "Only select repositories" pick that repository, and set <em>Contents</em> to "Read and write".</li>
+        <li>Paste it here. The token stays in this browser and is only sent to api.github.com.</li>
+      </ol>
+      <p class="form-msg span" id="s-msg"></p>
+      <div class="form-actions span">
+        <button class="btn primary" type="submit" id="s-connect">Connect and load</button>
+        <button class="btn" type="button" id="s-disconnect">Disconnect</button>
+        <button class="btn" type="button" id="s-close">Close</button>
+      </div>
+    </form>
+  </section>
+
+  <form id="entry" class="entry" autocomplete="off">
+    <label class="field"><span class="label">Date</span><input type="date" id="f-date" required></label>
+    <label class="field"><span class="label">Hours</span><input type="text" id="f-hours" inputmode="decimal" placeholder="1.5 or 1:30" required></label>
+    <label class="field wide"><span class="label">Item</span><input type="text" id="f-item" list="items" placeholder="Client or task" required></label>
+    <label class="field wide"><span class="label">Description</span><input type="text" id="f-desc" placeholder="What you did"></label>
+    <label class="check"><input type="checkbox" id="f-nc"> Not charged</label>
+    <div class="form-actions">
+      <button class="btn primary" type="submit" id="f-submit">Add entry</button>
+      <button class="btn" type="button" id="f-cancel" hidden>Cancel</button>
+    </div>
+    <p class="form-msg" id="f-msg"></p>
+    <datalist id="items"></datalist>
+  </form>
+
+  <main id="weeks" class="weeks"></main>
+</div>
+
+<script>
+(function () {
+  const KEY = "timesheet.v1";
+  const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const $ = (id) => document.getElementById(id);
+
+  // ---- dates (all local, ISO yyyy-mm-dd strings) ----
+  const pad = (n) => String(n).padStart(2, "0");
+  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const parse = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const todayIso = () => iso(new Date());
+  const mondayOf = (s) => { const d = parse(s); return iso(addDays(d, -((d.getDay() + 6) % 7))); };
+  const dayIndex = (s) => (parse(s).getDay() + 6) % 7;
+  const short = (s) => { const d = parse(s); return `${MONTHS[d.getMonth()]} ${d.getDate()}`; };
+  const shortDay = (s) => `${DAYS[dayIndex(s)]} ${short(s)}`;
+
+  const fmt = (n) => {
+    const s = (Math.round(n * 100) / 100).toFixed(2);
+    return s.replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+  };
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+  function parseHours(str) {
+    str = String(str).trim();
+    let h;
+    if (str.includes(":")) {
+      const [a, b] = str.split(":");
+      h = Number(a || 0) + Number(b || 0) / 60;
+    } else h = Number(str.replace(",", "."));
+    if (!isFinite(h) || h <= 0 || h > 24) return null;
+    return Math.round(h * 100) / 100;
+  }
+
+  // ---- storage ----
+  function normalize(s) {
+    const entries = (Array.isArray(s.entries) ? s.entries : []).filter((e) => e && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && isFinite(Number(e.hours)))
+      .map((e) => ({ id: e.id || uid(), date: e.date, hours: Number(e.hours), item: String(e.item || ""), description: String(e.description || ""), notCharged: !!e.notCharged }));
+    const budgets = {};
+    if (s.budgets && typeof s.budgets === "object") for (const k in s.budgets) if (isFinite(Number(s.budgets[k]))) budgets[k] = Number(s.budgets[k]);
+    return { version: 1, entries, budgets };
+  }
+  function load() {
+    try { const raw = localStorage.getItem(KEY); if (raw) return normalize(JSON.parse(raw)); } catch (e) {}
+    return { version: 1, entries: [], budgets: {} };
+  }
+  let state = load();
+  let version = 0; // bumps on every local change, so a sync knows if edits landed mid-upload
+  function writeLocal() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); return true; } catch (e) { return false; }
+  }
+  function save() {
+    version++;
+    const ok = writeLocal();
+    if (cfg) { meta.dirty = true; writeMeta(); scheduleSync(); return; }
+    setStatus(ok ? "Saved." : "This browser blocked saving. Download your data or connect GitHub to keep it.", !ok);
+  }
+  function setStatus(text, err) { const st = $("status"); st.textContent = text; st.className = err ? "status err" : "status"; }
+
+  // ---- GitHub sync (contents API; the JSON file is the source of truth) ----
+  const CFG_KEY = "timesheet.github", META_KEY = "timesheet.sync";
+  const readJSON = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
+  const writeJSON = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  let cfg = readJSON(CFG_KEY);
+  let meta = readJSON(META_KEY) || { sha: null, dirty: false };
+  const writeMeta = () => writeJSON(META_KEY, meta);
+  let syncTimer = null, syncing = false, syncAgain = false;
+
+  function b64encode(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  function b64decode(b64) {
+    const bin = atob(b64.replace(/\s/g, ""));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+  const repoUrl = () => `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}`;
+  const fileUrl = () => `${repoUrl()}/contents/${cfg.path.split("/").map(encodeURIComponent).join("/")}`;
+  function gh(url, opts = {}) {
+    return fetch(url, { ...opts, cache: "no-store", headers: {
+      Accept: "application/vnd.github+json", Authorization: `Bearer ${cfg.token}`, "X-GitHub-Api-Version": "2022-11-28",
+      ...(opts.body ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) } });
+  }
+  async function ghError(r) {
+    let msg = "";
+    try { msg = (await r.json()).message || ""; } catch (e) {}
+    if (r.status === 401) return "GitHub rejected the token. Check that it was pasted in full and hasn't expired.";
+    if (r.status === 403) return `The token can't write to ${cfg.owner}/${cfg.repo}. Give it access to that repository with Contents set to "Read and write".`;
+    if (r.status === 404) return `Can't find ${cfg.owner}/${cfg.repo}${msg.includes("Branch") ? ` branch "${cfg.branch}"` : ""}. Check the names, and that the token includes this repository.`;
+    return `GitHub error ${r.status}${msg ? `: ${msg}` : ""}.`;
+  }
+  async function fetchRemote() {
+    const r = await gh(`${fileUrl()}?ref=${encodeURIComponent(cfg.branch)}`);
+    if (r.status === 404) {
+      const repo = await gh(repoUrl()); // tell a missing file apart from a missing repo or token without access
+      if (!repo.ok) throw new Error(await ghError(repo));
+      return { data: null, sha: null };
+    }
+    if (!r.ok) throw new Error(await ghError(r));
+    const j = await r.json();
+    let text;
+    if (j.encoding === "base64" && j.content) text = b64decode(j.content);
+    else { // files over 1 MB come back without inline content
+      const raw = await gh(`${fileUrl()}?ref=${encodeURIComponent(cfg.branch)}`, { headers: { Accept: "application/vnd.github.raw+json" } });
+      if (!raw.ok) throw new Error(await ghError(raw));
+      text = await raw.text();
+    }
+    let data;
+    try { data = normalize(JSON.parse(text)); } catch (e) { throw new Error(`${cfg.path} on GitHub isn't valid timesheet JSON. Fix or delete it, then reconnect.`); }
+    return { data, sha: j.sha };
+  }
+  function scheduleSync(delay = 1200) {
+    setSync("pending");
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(pushRemote, delay);
+  }
+  async function pushRemote() {
+    clearTimeout(syncTimer); syncTimer = null;
+    if (!cfg || !meta.dirty) return;
+    if (syncing) { syncAgain = true; return; }
+    syncing = true; setSync("saving");
+    const sent = version;
+    try {
+      const body = { message: `Update timesheet (${state.entries.length} entries)`, content: b64encode(JSON.stringify(state, null, 2) + "\n"), branch: cfg.branch };
+      if (meta.sha) body.sha = meta.sha;
+      const r = await gh(fileUrl(), { method: "PUT", body: JSON.stringify(body) });
+      if (r.status === 409 || (r.status === 422 && /sha/i.test(await r.clone().text()))) {
+        syncing = false;
+        const remote = await fetchRemote();
+        return conflict(remote, "The file on GitHub changed since this browser last loaded it, probably from another device.");
+      }
+      if (!r.ok) throw new Error(await ghError(r));
+      meta.sha = (await r.json()).content.sha;
+      if (version === sent) meta.dirty = false;
+      writeMeta();
+      syncing = false;
+      if (meta.dirty || syncAgain) { syncAgain = false; return scheduleSync(300); }
+      setSync("ok");
+    } catch (e) {
+      syncing = false;
+      setSync("error", e instanceof TypeError ? "Can't reach GitHub. Your changes are kept in this browser and will upload on the next save." : e.message);
+    }
+  }
+  function applyRemote(remote) {
+    state = remote.data || { version: 1, entries: [], budgets: {} };
+    meta = { sha: remote.sha, dirty: false }; writeMeta();
+    writeLocal(); render(); setSync("ok");
+  }
+  function conflict(remote, why) {
+    if (!remote.data) { meta.sha = null; writeMeta(); return pushRemote(); } // file was deleted on GitHub: recreate it
+    setSync("pending", "Waiting for you to choose which version to keep.");
+    showBanner(`${why} GitHub has ${remote.data.entries.length} entries; this browser has ${state.entries.length}.`, [
+      { label: "Use GitHub version", primary: true, fn: () => applyRemote(remote) },
+      { label: "Keep this browser's version", fn: () => { meta.sha = remote.sha; meta.dirty = true; writeMeta(); pushRemote(); } },
+    ]);
+  }
+  // Decide what to do when the page opens or a repo is connected.
+  async function syncOnOpen(fresh) {
+    setSync("saving", "Loading from GitHub…");
+    let remote;
+    try { remote = await fetchRemote(); }
+    catch (e) {
+      setSync("error", e instanceof TypeError ? "Can't reach GitHub. Showing the copy saved in this browser." : e.message);
+      if (fresh) $("s-msg").textContent = e instanceof TypeError ? "Can't reach GitHub. Check your connection." : e.message;
+      return false;
+    }
+    if (!remote.data) { // no file yet: create it from whatever this browser has
+      meta = { sha: null, dirty: true }; writeMeta();
+      await pushRemote();
+      if (meta.dirty) { if (fresh) $("s-msg").textContent = $("status").textContent; return false; }
+      return true;
+    }
+    const localHasData = state.entries.length || Object.keys(state.budgets).length;
+    if (fresh) {
+      if (localHasData && remote.sha !== meta.sha) conflict(remote, `${cfg.path} already exists on GitHub.`);
+      else applyRemote(remote);
+    } else if (remote.sha === meta.sha) {
+      if (meta.dirty) await pushRemote(); else applyRemote(remote);
+    } else if (meta.dirty) conflict(remote, "This browser has changes that weren't uploaded, and the file on GitHub has changed too.");
+    else applyRemote(remote);
+    return true;
+  }
+  function setSync(kind, text) {
+    const dot = $("sync-dot"), label = $("sync-label");
+    dot.className = "sync-dot";
+    if (!cfg) {
+      label.textContent = "Connect GitHub";
+      $("where").textContent = "Data is saved in this browser.";
+      return;
+    }
+    $("where").textContent = `Data is saved to GitHub in ${cfg.owner}/${cfg.repo}/${cfg.path}.`;
+    const states = { ok: ["ok", "Saved to GitHub"], pending: ["pending", "Unsaved changes"], saving: ["pending", "Saving…"], error: ["err", "Sync problem"] };
+    const [cls, txt] = states[kind || "saving"];
+    dot.classList.add(cls); label.textContent = txt;
+    if (kind === "ok") setStatus(`Last saved ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`);
+    else setStatus(text || "", kind === "error");
+  }
+
+  // ---- weekly math ----
+  // Each week's starting budget is the prior week's remaining, unless set by hand.
+  function computeWeeks() {
+    const groups = new Map();
+    for (const e of state.entries) {
+      const w = mondayOf(e.date);
+      if (!groups.has(w)) groups.set(w, []);
+      groups.get(w).push(e);
+    }
+    const keys = new Set([mondayOf(todayIso()), ...groups.keys(), ...Object.keys(state.budgets)]);
+    const sorted = [...keys].sort();
+    const out = [];
+    let prev = null;
+    for (let w = sorted[0]; w <= sorted[sorted.length - 1]; w = iso(addDays(parse(w), 7))) {
+      const entries = (groups.get(w) || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+      const daily = DAYS.map(() => ({ charged: 0, nc: 0 }));
+      let charged = 0, nc = 0;
+      for (const e of entries) {
+        const d = daily[dayIndex(e.date)];
+        if (e.notCharged) { d.nc += e.hours; nc += e.hours; } else { d.charged += e.hours; charged += e.hours; }
+      }
+      const manual = Object.prototype.hasOwnProperty.call(state.budgets, w);
+      const start = manual ? state.budgets[w] : prev ? prev.remaining : 0;
+      const week = { start: w, end: iso(addDays(parse(w), 6)), entries, daily, charged, nc, total: charged + nc,
+        budgetStart: start, budgetSource: manual ? "manual" : prev ? "carried" : "none", prevStart: prev && prev.start,
+        remaining: start - charged };
+      out.push(week);
+      prev = week;
+    }
+    return out;
+  }
+
+  // ---- render ----
+  function render() {
+    const weeks = computeWeeks();
+    const thisWeek = mondayOf(todayIso());
+    const html = [];
+    for (let i = weeks.length - 1; i >= 0; i--) {
+      const w = weeks[i];
+      const isCurrent = w.start === thisWeek;
+      const rangeTxt = `${short(w.start)} – ${short(w.end)}, ${parse(w.end).getFullYear()}`;
+      if (!w.entries.length && !isCurrent && w.budgetSource !== "manual") {
+        html.push(`<div class="quiet-week"><strong>Week of ${short(w.start)}</strong><span>${rangeTxt}</span><span>No entries</span><span>Budget carried: <span class="num">${fmt(w.remaining)}</span> h</span></div>`);
+        continue;
+      }
+      html.push(`<section class="week" data-week="${w.start}">
+        <div class="week-head"><h2>Week of ${short(w.start)}</h2><span class="range">${rangeTxt}</span>${isCurrent ? '<span class="pill">This week</span>' : ""}</div>
+        <div class="week-body">
+          <div class="ledger">${ledger(w)}</div>
+          ${summary(w)}
+        </div>
+      </section>`);
+    }
+    $("weeks").innerHTML = html.join("");
+    const items = [...new Set(state.entries.map((e) => e.item).filter(Boolean))].sort();
+    $("items").innerHTML = items.map((i) => `<option value="${esc(i)}"></option>`).join("");
+  }
+
+  function ledger(w) {
+    if (!w.entries.length) return `<p class="empty">No time logged this week yet. Add an entry above.</p>`;
+    const rows = [];
+    let i = 0;
+    while (i < w.entries.length) {
+      const date = w.entries[i].date;
+      let dayTotal = 0, dayNc = 0;
+      while (i < w.entries.length && w.entries[i].date === date) {
+        const e = w.entries[i++];
+        dayTotal += e.hours; if (e.notCharged) dayNc += e.hours;
+        rows.push(`<tr class="${e.notCharged ? "nc" : ""}" data-id="${e.id}">
+          <td class="date">${shortDay(e.date)}</td>
+          <td class="item">${esc(e.item)}</td>
+          <td class="desc">${esc(e.description)}</td>
+          <td class="r num hours">${fmt(e.hours)}</td>
+          <td class="c"><input type="checkbox" data-action="toggle-nc" aria-label="Not charged" ${e.notCharged ? "checked" : ""}></td>
+          <td class="acts"><button class="btn ghost" type="button" data-action="edit">Edit</button><button class="btn ghost" type="button" data-action="delete">Delete</button></td>
+        </tr>`);
+      }
+      rows.push(`<tr class="daytotal"><td colspan="3">${shortDay(date)} total${dayNc ? `<span class="sub">${fmt(dayNc)} h not charged</span>` : ""}</td><td class="r num">${fmt(dayTotal)}</td><td colspan="2"></td></tr>`);
+    }
+    return `<table><thead><tr><th>Date</th><th>Item</th><th>Description</th><th class="r">Hours</th><th class="c">Not charged</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
+  }
+
+  function summary(w) {
+    const max = Math.max(8, ...w.daily.map((d) => d.charged + d.nc));
+    const bars = w.daily.map((d, i) => {
+      const t = d.charged + d.nc;
+      return `<div class="day" title="${DAYS[i]}: ${fmt(t)} h"><span class="v">${t ? fmt(t) : "–"}</span>
+        <div class="bar"><span class="n" style="height:${(d.nc / max) * 100}%"></span><span class="ch" style="height:${(d.charged / max) * 100}%"></span></div>
+        <span>${DAYS[i]}</span></div>`;
+    }).join("");
+    let note;
+    if (w.budgetSource === "manual") note = `Set by hand.${w.prevStart ? ` <button type="button" data-action="reset-budget">Use carried amount</button>` : ` <button type="button" data-action="reset-budget">Clear</button>`}`;
+    else if (w.budgetSource === "carried") note = `Carried from week of ${short(w.prevStart)}.`;
+    else note = `Enter the starting budget. Later weeks carry it forward.`;
+    return `<aside class="summary">
+      <span class="label">Weekly summary</span>
+      <div class="days">${bars}</div>
+      <div class="rows">
+        <div class="row"><span class="k">Total hours</span><span class="num">${fmt(w.total)}</span></div>
+        <div class="row"><span class="k">Charged</span><span class="num">${fmt(w.charged)}</span></div>
+        <div class="row ncrow"><span class="k">Not charged</span><span class="num">${fmt(w.nc)}</span></div>
+      </div>
+      <div class="budget">
+        <label class="row"><span class="k">Starting budget (h)</span><input type="text" inputmode="decimal" id="budget-${w.start}" data-action="budget" value="${fmt(w.budgetStart)}"></label>
+        <div class="note">${note}</div>
+        <div class="remaining"><span class="k">Remaining budget</span><span class="big ${w.remaining < 0 ? "neg" : ""}">${fmt(w.remaining)}</span></div>
+        <p class="hint">Remaining = starting budget − charged hours. It becomes next week's starting budget.</p>
+      </div>
+    </aside>`;
+  }
+
+  // ---- entry form ----
+  let editingId = null;
+  const form = $("entry");
+  function resetForm(keepDate) {
+    const d = keepDate ? $("f-date").value : todayIso();
+    form.reset();
+    $("f-date").value = d || todayIso();
+    editingId = null;
+    form.classList.remove("editing");
+    $("f-submit").textContent = "Add entry";
+    $("f-cancel").hidden = true;
+    $("f-msg").textContent = "";
+  }
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const date = $("f-date").value;
+    const hours = parseHours($("f-hours").value);
+    const item = $("f-item").value.trim();
+    if (!date) return ($("f-msg").textContent = "Pick a date.");
+    if (hours === null) return ($("f-msg").textContent = "Enter hours between 0 and 24, like 1.5 or 1:30.");
+    if (!item) return ($("f-msg").textContent = "Enter an item.");
+    const data = { date, hours, item, description: $("f-desc").value.trim(), notCharged: $("f-nc").checked };
+    if (editingId) {
+      const e = state.entries.find((x) => x.id === editingId);
+      if (e) Object.assign(e, data);
+    } else state.entries.push({ id: uid(), ...data });
+    save(); render(); resetForm(true);
+    $("f-hours").focus();
+  });
+  $("f-cancel").addEventListener("click", () => resetForm(false));
+
+  // ---- list actions ----
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-action]");
+    if (!btn) return;
+    const tr = btn.closest("tr[data-id]");
+    const entry = tr && state.entries.find((e) => e.id === tr.dataset.id);
+    const act = btn.dataset.action;
+    if (act === "edit" && entry) {
+      editingId = entry.id;
+      $("f-date").value = entry.date; $("f-hours").value = fmt(entry.hours);
+      $("f-item").value = entry.item; $("f-desc").value = entry.description; $("f-nc").checked = entry.notCharged;
+      form.classList.add("editing"); $("f-submit").textContent = "Save changes"; $("f-cancel").hidden = false; $("f-msg").textContent = "";
+      form.scrollIntoView({ block: "center" }); $("f-hours").focus();
+    } else if (act === "delete" && entry) {
+      if (btn.classList.contains("armed")) {
+        state.entries = state.entries.filter((e) => e.id !== entry.id);
+        if (editingId === entry.id) resetForm(false);
+        save(); render();
+      } else {
+        btn.classList.add("armed"); btn.textContent = "Confirm delete";
+        setTimeout(() => { if (btn.isConnected) { btn.classList.remove("armed"); btn.textContent = "Delete"; } }, 3000);
+      }
+    } else if (act === "reset-budget") {
+      delete state.budgets[btn.closest("[data-week]").dataset.week];
+      save(); render();
+    }
+  });
+  document.addEventListener("change", (ev) => {
+    const el = ev.target;
+    if (el.dataset.action === "toggle-nc") {
+      const entry = state.entries.find((e) => e.id === el.closest("tr").dataset.id);
+      if (entry) { entry.notCharged = el.checked; save(); render(); }
+    } else if (el.dataset.action === "budget") {
+      const week = el.closest("[data-week]").dataset.week;
+      const v = el.value.trim();
+      if (v === "") delete state.budgets[week];
+      else {
+        const n = Number(v.replace(",", "."));
+        if (!isFinite(n)) { render(); return; }
+        state.budgets[week] = n;
+      }
+      save(); render();
+    }
+  });
+
+  // ---- downloads ----
+  function download(name, text, type) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  const csvCell = (v) => `"${String(v).replace(/"/g, '""')}"`;
+  const csv = (rows) => "﻿" + rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
+  const stamp = () => todayIso();
+
+  $("dl-json").addEventListener("click", () => {
+    const weeks = computeWeeks().map((w) => ({ weekStart: w.start, weekEnd: w.end, totalHours: w.total, chargedHours: w.charged,
+      notChargedHours: w.nc, startingBudget: w.budgetStart, remainingBudget: w.remaining,
+      dailyTotals: Object.fromEntries(DAYS.map((d, i) => [d, w.daily[i].charged + w.daily[i].nc])) }));
+    download(`timesheet-${stamp()}.json`, JSON.stringify({ exportedAt: new Date().toISOString(), ...state, weeklySummary: weeks }, null, 2), "application/json");
+  });
+  $("dl-csv").addEventListener("click", () => {
+    const rows = [["Week start", "Date", "Day", "Item", "Description", "Hours", "Not charged"]];
+    state.entries.slice().sort((a, b) => a.date.localeCompare(b.date))
+      .forEach((e) => rows.push([mondayOf(e.date), e.date, DAYS[dayIndex(e.date)], e.item, e.description, e.hours, e.notCharged ? "Yes" : "No"]));
+    download(`timesheet-entries-${stamp()}.csv`, csv(rows), "text/csv");
+  });
+  $("dl-sum").addEventListener("click", () => {
+    const rows = [["Week start", "Week end", ...DAYS, "Total hours", "Charged", "Not charged", "Starting budget", "Remaining budget"]];
+    computeWeeks().forEach((w) => rows.push([w.start, w.end, ...w.daily.map((d) => d.charged + d.nc), w.total, w.charged, w.nc, w.budgetStart, w.remaining]));
+    download(`timesheet-weekly-${stamp()}.csv`, csv(rows), "text/csv");
+  });
+
+  // ---- import ----
+  const banner = $("banner");
+  $("import-btn").addEventListener("click", () => $("import-file").click());
+  $("import-file").addEventListener("change", (ev) => {
+    const file = ev.target.files[0];
+    ev.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let incoming;
+      try { incoming = normalize(JSON.parse(reader.result)); }
+      catch (e) { showBanner(`That file isn't a timesheet export. Choose a .json file made with "Download all".`, []); return; }
+      showBanner(`Replace your current ${state.entries.length} entries with ${incoming.entries.length} entries from ${esc(file.name)}? Download your current data first if you want to keep it.`, [
+        { label: "Replace data", primary: true, fn: () => { state = incoming; save(); render(); resetForm(false); } },
+      ]);
+    };
+    reader.readAsText(file);
+  });
+  function showBanner(msg, actions) {
+    banner.innerHTML = `<span>${msg}</span><span class="form-actions"></span>`;
+    const box = banner.lastElementChild;
+    const list = actions.length ? actions : [{ label: "Dismiss", fn: () => {} }];
+    if (actions.length && !actions.some((a) => a.noCancel)) list.push({ label: "Cancel", fn: () => {} });
+    for (const a of list) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = a.primary ? "btn primary" : "btn"; b.textContent = a.label;
+      b.onclick = () => { banner.hidden = true; a.fn(); };
+      box.appendChild(b);
+    }
+    banner.hidden = false;
+  }
+
+  // ---- GitHub settings panel ----
+  const panel = $("sync-panel");
+  function openPanel() {
+    const c = cfg || {};
+    $("s-owner").value = c.owner || ""; $("s-repo").value = c.repo || "";
+    $("s-branch").value = c.branch || "main"; $("s-path").value = c.path || "data/timesheet.json";
+    $("s-token").value = c.token || ""; $("s-msg").textContent = "";
+    $("s-disconnect").hidden = !cfg;
+    panel.hidden = false; panel.scrollIntoView({ block: "start" });
+  }
+  $("sync-btn").addEventListener("click", () => {
+    if (cfg && !panel.hidden) { panel.hidden = true; return; }
+    if (cfg && meta.dirty && !syncing) pushRemote();
+    openPanel();
+  });
+  $("s-close").addEventListener("click", () => (panel.hidden = true));
+  $("s-disconnect").addEventListener("click", () => {
+    cfg = null; writeJSON(CFG_KEY, null);
+    meta = { sha: null, dirty: false }; writeMeta();
+    panel.hidden = true; setSync(); setStatus("Disconnected. The token was removed from this browser; your entries are still here.");
+  });
+  $("sync-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const next = {
+      owner: $("s-owner").value.trim(), repo: $("s-repo").value.trim().replace(/\.git$/, ""),
+      branch: $("s-branch").value.trim() || "main",
+      path: ($("s-path").value.trim() || "data/timesheet.json").replace(/^\/+/, ""),
+      token: $("s-token").value.trim(),
+    };
+    const sameFile = cfg && cfg.owner === next.owner && cfg.repo === next.repo && cfg.branch === next.branch && cfg.path === next.path;
+    const prev = cfg, prevMeta = meta;
+    cfg = next;
+    if (!sameFile) meta = { sha: null, dirty: false };
+    $("s-connect").disabled = true; $("s-msg").textContent = "";
+    const ok = await syncOnOpen(!sameFile);
+    $("s-connect").disabled = false;
+    if (ok) { writeJSON(CFG_KEY, cfg); writeMeta(); panel.hidden = true; }
+    else { cfg = prev; meta = prevMeta; setSync(cfg ? "error" : undefined); }
+  });
+  // Upload pending changes before the tab goes away.
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && syncTimer) pushRemote(); });
+  window.addEventListener("beforeunload", (ev) => { if (cfg && meta.dirty) { pushRemote(); ev.preventDefault(); ev.returnValue = ""; } });
+
+  resetForm(false);
+  render();
+  setSync();
+  if (cfg) syncOnOpen(false);
+})();
+</script>
+</body>
+</html>
