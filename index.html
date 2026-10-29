@@ -169,6 +169,16 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
 .sync-grid code { font-family: var(--font-num); font-size: 0.85em; }
 .sync-grid a { color: var(--accent); }
 @media (max-width: 760px) { .sync-grid { grid-template-columns: 1fr 1fr; } }
+.pw-setup { border-top: 1px solid var(--line); padding-top: 14px; display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 220px)) auto; align-items: end; }
+.pw-setup > div, .pw-setup .span { grid-column: 1 / -1; }
+.pw-setup h3 { margin: 0; font-family: var(--font-display); font-size: 1.05rem; }
+.pw-setup input, .login input { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); padding: 7px 9px; }
+.pw-setup input:focus, .login input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.ok-msg { margin: 0; font-size: 0.86rem; color: var(--accent); }
+.ok-msg:empty { display: none; }
+@media (max-width: 640px) { .pw-setup { grid-template-columns: 1fr; } }
+.login { max-width: 420px; justify-self: center; width: 100%; margin-top: 8vh; }
+.login form { display: grid; gap: 12px; }
 .quiet-week { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; color: var(--muted); font-size: 0.9rem; padding: 10px 0; border-top: 1px dashed var(--line); }
 .quiet-week strong { color: var(--ink); font-weight: 600; }
 @media (prefers-reduced-motion: no-preference) { .entry, .btn { transition: border-color .15s, box-shadow .15s; } }
@@ -193,6 +203,18 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
 
   <div id="banner" class="banner" hidden></div>
 
+  <section id="login" class="panel login" hidden>
+    <div>
+      <h2>Log in</h2>
+      <p>Enter your timesheet password.</p>
+    </div>
+    <form id="login-form">
+      <label class="field"><span class="label">Password</span><input type="password" id="l-pw" autocomplete="current-password" required></label>
+      <p class="form-msg" id="l-msg"></p>
+      <div class="form-actions"><button class="btn primary" type="submit" id="l-go">Log in</button></div>
+    </form>
+  </section>
+
   <section id="sync-panel" class="panel" hidden>
     <div>
       <h2>GitHub storage</h2>
@@ -212,9 +234,20 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
       <p class="form-msg span" id="s-msg"></p>
       <div class="form-actions span">
         <button class="btn primary" type="submit" id="s-connect">Connect and load</button>
-        <button class="btn" type="button" id="s-disconnect">Disconnect</button>
+        <button class="btn" type="button" id="s-disconnect">Log out of this browser</button>
         <button class="btn" type="button" id="s-close">Close</button>
       </div>
+    </form>
+    <form id="pw-form" class="pw-setup" autocomplete="off" hidden>
+      <div>
+        <h3>Password login</h3>
+        <p>Choose one password to open your timesheet on any device or browser without entering the GitHub details again. The details above are encrypted with this password and saved as <code>config.json</code> next to the app.</p>
+      </div>
+      <label class="field"><span class="label">Password</span><input type="password" id="p-new" autocomplete="new-password" minlength="6" required></label>
+      <label class="field"><span class="label">Repeat password</span><input type="password" id="p-new2" autocomplete="new-password" required></label>
+      <div class="form-actions"><button class="btn primary" type="submit" id="p-save">Save password</button></div>
+      <p class="form-msg span" id="p-msg"></p>
+      <p class="ok-msg span" id="p-ok"></p>
     </form>
   </section>
 
@@ -696,6 +729,8 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
     $("s-branch").value = c.branch || "main"; $("s-path").value = c.path || "data/timesheet.json";
     $("s-token").value = c.token || ""; $("s-msg").textContent = "";
     $("s-disconnect").hidden = !cfg;
+    $("pw-form").hidden = !cfg;
+    $("p-msg").textContent = ""; $("p-ok").textContent = "";
     panel.hidden = false; panel.scrollIntoView({ block: "start" });
   }
   $("sync-btn").addEventListener("click", () => {
@@ -704,10 +739,23 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
     openPanel();
   });
   $("s-close").addEventListener("click", () => (panel.hidden = true));
-  $("s-disconnect").addEventListener("click", () => {
+  function logOut() {
     cfg = null; writeJSON(CFG_KEY, null);
     meta = { sha: null, dirty: false }; writeMeta();
-    panel.hidden = true; setSync(); setStatus("Disconnected. The token was removed from this browser; your entries are still here.");
+    state = { version: 1, entries: [], budgets: {} }; writeLocal();
+    panel.hidden = true; banner.hidden = true; resetForm(false); render(); setSync();
+    setStatus("Logged out. This browser no longer has your timesheet or GitHub details.");
+    if (sealed) setLocked(true);
+  }
+  $("s-disconnect").addEventListener("click", async () => {
+    if (meta.dirty) await pushRemote();
+    if (meta.dirty) {
+      showBanner("Some changes haven't uploaded to GitHub yet. Logging out now will lose them.", [
+        { label: "Log out anyway", primary: true, fn: logOut },
+      ]);
+      return;
+    }
+    logOut();
   });
   $("sync-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -724,9 +772,97 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
     $("s-connect").disabled = true; $("s-msg").textContent = "";
     const ok = await syncOnOpen(!sameFile);
     $("s-connect").disabled = false;
-    if (ok) { writeJSON(CFG_KEY, cfg); writeMeta(); panel.hidden = true; }
+    if (ok) {
+      writeJSON(CFG_KEY, cfg); writeMeta();
+      if (sealed) panel.hidden = true;
+      else { openPanel(); $("pw-form").scrollIntoView({ block: "center" }); $("p-new").focus(); }
+    }
     else { cfg = prev; meta = prevMeta; setSync(cfg ? "error" : undefined); }
   });
+  // ---- password login: GitHub details encrypted with a password, published as config.json ----
+  const ITER = 310000;
+  const toB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  let sealed = null;
+  async function deriveKey(pw, salt, iterations) {
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+  async function seal(c, pw) {
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(pw, salt, ITER);
+    const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(c)));
+    return { version: 1, kdf: "PBKDF2-SHA256", iterations: ITER, salt: toB64(salt), iv: toB64(iv), data: toB64(data) };
+  }
+  async function unseal(box, pw) { // throws on a wrong password
+    const key = await deriveKey(pw, fromB64(box.salt), box.iterations);
+    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(box.iv) }, key, fromB64(box.data));
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+  async function loadSealed() {
+    try {
+      const r = await fetch("config.json", { cache: "no-store" });
+      if (!r.ok) return null;
+      const box = await r.json();
+      return box && box.data && box.salt ? box : null;
+    } catch (e) { return null; }
+  }
+  // The repo serving this page, when it's on GitHub Pages (user.github.io/repo/).
+  function appRepo() {
+    const m = location.hostname.match(/^([^.]+)\.github\.io$/i);
+    if (!m) return null;
+    const first = location.pathname.split("/").filter(Boolean)[0];
+    return { owner: m[1], repo: first && !first.includes(".") ? first : `${m[1]}.github.io` };
+  }
+  function setLocked(locked) {
+    $("login").hidden = !locked;
+    for (const el of [$("entry"), $("weeks"), document.querySelector(".tools")]) el.hidden = locked;
+    if (locked) { panel.hidden = true; $("l-pw").focus(); }
+  }
+  $("login-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    $("l-go").disabled = true; $("l-msg").textContent = "Checking…";
+    let c;
+    try { c = await unseal(sealed, $("l-pw").value); }
+    catch (e) { $("l-go").disabled = false; $("l-msg").textContent = "Wrong password. Try again."; $("l-pw").select(); return; }
+    cfg = c; meta = { sha: null, dirty: false };
+    const ok = await syncOnOpen(true);
+    $("l-go").disabled = false;
+    if (!ok) { $("l-msg").textContent = $("status").textContent || "Couldn't load from GitHub."; cfg = null; setSync(); return; }
+    writeJSON(CFG_KEY, cfg); writeMeta();
+    $("l-pw").value = ""; $("l-msg").textContent = "";
+    setLocked(false);
+  });
+  $("pw-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const pw = $("p-new").value;
+    $("p-msg").textContent = ""; $("p-ok").textContent = "";
+    if (pw.length < 6) return ($("p-msg").textContent = "Use at least 6 characters.");
+    if (pw !== $("p-new2").value) return ($("p-msg").textContent = "The two passwords don't match.");
+    $("p-save").disabled = true;
+    const text = JSON.stringify(await seal(cfg, pw), null, 2) + "\n";
+    const target = appRepo();
+    let saved = false;
+    if (target) { // try to commit config.json to the app's own repo
+      try {
+        const url = `https://api.github.com/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/contents/config.json`;
+        const cur = await gh(url);
+        const body = { message: "Update password login", content: b64encode(text) };
+        if (cur.ok) body.sha = (await cur.json()).sha;
+        saved = (await gh(url, { method: "PUT", body: JSON.stringify(body) })).ok;
+      } catch (e) {}
+    }
+    $("p-save").disabled = false;
+    $("p-new").value = ""; $("p-new2").value = "";
+    if (saved) {
+      sealed = JSON.parse(text);
+      $("p-ok").textContent = `Password saved to ${target.owner}/${target.repo}. It works on other devices in a minute or two, once GitHub Pages updates.`;
+    } else {
+      download("config.json", text, "application/json");
+      $("p-ok").textContent = `Downloaded config.json. Upload it to your ${target ? `${target.owner}/${target.repo}` : "app"} repository on GitHub (Add file → Upload files → Commit). Password login works a minute or two later. To skip this step next time, give your token Contents access to that repository as well.`;
+    }
+  });
+
   // Upload pending changes before the tab goes away.
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && syncTimer) pushRemote(); });
   window.addEventListener("beforeunload", (ev) => { if (cfg && meta.dirty) { pushRemote(); ev.preventDefault(); ev.returnValue = ""; } });
@@ -735,6 +871,7 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
   render();
   setSync();
   if (cfg) syncOnOpen(false);
+  loadSealed().then((box) => { sealed = box; if (box && !cfg) setLocked(true); });
 })();
 </script>
 </body>

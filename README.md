@@ -28,6 +28,16 @@ The app creates `data/timesheet.json` on the first save. After that, changes upl
 
 If you edit on two devices at once, the app notices the file changed and asks which version to keep.
 
+### Password login (so you only enter the GitHub details once)
+
+After connecting, the GitHub panel shows **Password login**. Choose a password and click **Save password**. The app encrypts your GitHub details (owner, repo and token) with that password (PBKDF2 + AES-256-GCM, in the browser) and saves the result as `config.json` in this repo.
+
+From then on, any browser or device that opens the site just asks for the password. It remembers you after that until you click **Log out of this browser**.
+
+- If your token can also write to this repo, `config.json` is committed for you. Otherwise the app downloads it, and you upload it here with **Add file → Upload files**.
+- To change the password, log in, open the GitHub panel and save a new one.
+- `config.json` is public, so anyone could try to guess the password. Pick one that isn't trivial. The token inside only has access to your data repo, and you can revoke it on GitHub at any time.
+
 ## How the budget works
 
 - **Remaining budget** = starting budget − charged hours that week. "Not charged" hours don't count.
