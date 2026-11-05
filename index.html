@@ -179,6 +179,12 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
 @media (max-width: 640px) { .pw-setup { grid-template-columns: 1fr; } }
 .login { max-width: 420px; justify-self: center; width: 100%; margin-top: 8vh; }
 .login form { display: grid; gap: 12px; }
+.paper-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+/* The preview stands in for a printed page, so it keeps paper colors in both themes. */
+.paper { background: #ffffff; color: #111111; padding: 24px; min-width: 600px; font: 14px/1.4 Arial, Helvetica, sans-serif; }
+.paper th { text-transform: none; letter-spacing: normal; font-size: inherit; color: inherit; }
+.paper p { color: inherit; max-width: none; }
+.paper:empty::before { content: "No entries in this period."; color: #666666; }
 .quiet-week { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; color: var(--muted); font-size: 0.9rem; padding: 10px 0; border-top: 1px dashed var(--line); }
 .quiet-week strong { color: var(--ink); font-weight: 600; }
 @media (prefers-reduced-motion: no-preference) { .entry, .btn { transition: border-color .15s, box-shadow .15s; } }
@@ -192,6 +198,7 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
       <p>Weeks run Monday to Sunday. <span id="where">Data is saved in this browser.</span> <span id="status" class="status"></span></p>
     </div>
     <div class="tools">
+      <button class="btn" id="inv-btn" type="button">Invoice addendum</button>
       <button class="btn" id="sync-btn" type="button"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">Connect GitHub</span></button>
       <button class="btn" id="dl-json" type="button">Download all (JSON)</button>
       <button class="btn" id="dl-csv" type="button">Entries CSV</button>
@@ -249,6 +256,28 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
       <p class="form-msg span" id="p-msg"></p>
       <p class="ok-msg span" id="p-ok"></p>
     </form>
+  </section>
+
+  <section id="inv-panel" class="panel" hidden>
+    <div>
+      <h2>Invoice addendum</h2>
+      <p>Choose the period you're billing, copy the addendum, and paste it on the second page of your invoice in Google Docs.</p>
+    </div>
+    <form id="inv-form" class="sync-grid" autocomplete="off">
+      <label class="field"><span class="label">From</span><input type="date" id="i-from"></label>
+      <label class="field"><span class="label">To</span><input type="date" id="i-to"></label>
+      <label class="field"><span class="label">Rate ($/hr)</span><input type="text" inputmode="decimal" id="i-rate" placeholder="160"></label>
+      <label class="field"><span class="label">Week 1 starts</span><input type="date" id="i-start"></label>
+      <p class="hint span" id="i-last"></p>
+      <div class="form-actions span">
+        <button class="btn primary" type="button" id="i-copy">Copy addendum</button>
+        <button class="btn" type="button" id="i-mark">Mark as invoiced</button>
+        <button class="btn" type="button" id="i-close">Close</button>
+      </div>
+      <p class="form-msg span" id="i-msg"></p>
+      <p class="ok-msg span" id="i-ok"></p>
+    </form>
+    <div class="paper-wrap"><div class="paper" id="i-preview"></div></div>
   </section>
 
   <form id="entry" class="entry" autocomplete="off">
@@ -310,11 +339,15 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
       .map((e) => ({ id: e.id || uid(), date: e.date, hours: Number(e.hours), item: String(e.item || ""), description: String(e.description || ""), notCharged: !!e.notCharged }));
     const budgets = {};
     if (s.budgets && typeof s.budgets === "object") for (const k in s.budgets) if (isFinite(Number(s.budgets[k]))) budgets[k] = Number(s.budgets[k]);
-    return { version: 1, entries, budgets };
+    const st = s.settings && typeof s.settings === "object" ? s.settings : {};
+    const settings = {};
+    if (st.rate !== "" && st.rate != null && isFinite(Number(st.rate))) settings.rate = Number(st.rate);
+    for (const k of ["startDate", "invoicedThrough"]) if (/^\d{4}-\d{2}-\d{2}$/.test(st[k])) settings[k] = st[k];
+    return { version: 1, entries, budgets, settings };
   }
   function load() {
     try { const raw = localStorage.getItem(KEY); if (raw) return normalize(JSON.parse(raw)); } catch (e) {}
-    return { version: 1, entries: [], budgets: {} };
+    return { version: 1, entries: [], budgets: {}, settings: {} };
   }
   let state = load();
   let version = 0; // bumps on every local change, so a sync knows if edits landed mid-upload
@@ -418,7 +451,7 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
     }
   }
   function applyRemote(remote) {
-    state = remote.data || { version: 1, entries: [], budgets: {} };
+    state = remote.data || { version: 1, entries: [], budgets: {}, settings: {} };
     meta = { sha: remote.sha, dirty: false }; writeMeta();
     writeLocal(); render(); setSync("ok");
   }
@@ -528,6 +561,7 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
     $("weeks").innerHTML = html.join("");
     const items = [...new Set(state.entries.map((e) => e.item).filter(Boolean))].sort();
     $("items").innerHTML = items.map((i) => `<option value="${esc(i)}"></option>`).join("");
+    if (!$("inv-panel").hidden) refreshInvoice();
   }
 
   function ledger(w) {
@@ -689,6 +723,147 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
     download(`timesheet-weekly-${stamp()}.csv`, csv(rows), "text/csv");
   });
 
+  // ---- invoice addendum (rich HTML for pasting into Google Docs) ----
+  const settings = () => state.settings || (state.settings = {});
+  const usDate = (s) => { const [y, m, d] = s.split("-"); return `${m}/${d}/${y}`; };
+  const longDate = (s) => `${short(s)}, ${s.slice(0, 4)}`;
+  const span = (a, b) => a.slice(0, 4) === b.slice(0, 4) ? `${short(a)} – ${longDate(b)}` : `${longDate(a)} – ${longDate(b)}`;
+  const money = (n) => {
+    const cents = Math.round(n * 100) % 100 !== 0;
+    return n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
+  };
+  const firstDate = () => state.entries.reduce((m, e) => (!m || e.date < m ? e.date : m), "") || todayIso();
+  const weekOne = () => mondayOf(settings().startDate || firstDate());
+
+  function buildAddendum(from, to) {
+    const rate = settings().rate;
+    const list = state.entries.filter((e) => e.date >= from && e.date <= to)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (!list.length) return null;
+    const start = parse(weekOne());
+    const weekNo = (d) => Math.round((parse(mondayOf(d)) - start) / 864e5 / 7) + 1;
+    const cell = "border:1px solid #000000;padding:6px 8px;vertical-align:top;";
+    const head = cell + "background:#fcf1d0;font-weight:bold;text-align:left;";
+    const sub = cell + "background:#fef9ea;font-weight:bold;";
+    const hrs = (h, nc) => nc ? `${fmt(h)} (no charge)` : fmt(h);
+    const subHrs = (t, nc) => nc ? `${fmt(t)} (${fmt(nc)} no charge)` : fmt(t);
+    const rows = [], text = [`Timesheet detail · ${span(from, to)}`, "", ["Item", "Week", "Date", "Description", "Hours"].join("\t")];
+    let total = 0, nc = 0, n = 0, i = 0;
+    while (i < list.length) {
+      const wk = weekNo(list[i].date);
+      let wTotal = 0, wNc = 0;
+      while (i < list.length && weekNo(list[i].date) === wk) {
+        const e = list[i++];
+        const desc = e.description ? `${e.item} – ${e.description}` : e.item;
+        wTotal += e.hours; if (e.notCharged) wNc += e.hours;
+        n++;
+        rows.push(`<tr><td style="${cell}">${n}</td><td style="${cell}">Week ${wk}</td><td style="${cell}">${usDate(e.date)}</td><td style="${cell}">${esc(desc)}</td><td style="${cell}">${hrs(e.hours, e.notCharged)}</td></tr>`);
+        text.push([n, `Week ${wk}`, usDate(e.date), desc, hrs(e.hours, e.notCharged)].join("\t"));
+      }
+      rows.push(`<tr><td style="${sub}" colspan="4">Week ${wk} subtotal</td><td style="${sub}">${subHrs(wTotal, wNc)}</td></tr>`);
+      text.push(["", "", "", `Week ${wk} subtotal`, subHrs(wTotal, wNc)].join("\t"));
+      total += wTotal; nc += wNc;
+    }
+    const charged = total - nc;
+    const sums = [["Total Hours", fmt(total)], ["Discounted hours", fmt(nc)], ["Hours Charged", fmt(charged)]];
+    if (rate != null) sums.push(["Rate", `${money(rate)}/hr`], ["Total Due", money(charged * rate)]);
+    const sumRows = sums.map(([k, v]) => {
+      const due = k === "Total Due";
+      const kStyle = head + (due ? "background:#e9c552;" : "font-weight:normal;");
+      const vStyle = cell + (due ? "background:#e9c552;font-weight:bold;" : "");
+      return `<tr><td style="${kStyle}">${k}</td><td style="${vStyle}">${v}</td></tr>`;
+    }).join("");
+    const html = `<p style="font-size:14pt;font-weight:bold;margin:0 0 10px;">Timesheet detail · ${span(from, to)}</p>`
+      + `<table style="border-collapse:collapse;width:100%;"><thead><tr>`
+      + `<th style="${head}width:8%;">Item</th><th style="${head}width:12%;">Week</th><th style="${head}width:15%;">Date</th><th style="${head}">Description</th><th style="${head}width:18%;">Hours</th>`
+      + `</tr></thead><tbody>${rows.join("")}</tbody></table>`
+      + `<p style="margin:0;">&nbsp;</p>`
+      + `<table style="border-collapse:collapse;width:50%;"><tbody>${sumRows}</tbody></table>`;
+    text.push("", ...sums.map(([k, v]) => `${k}\t${v}`));
+    return { html, text: text.join("\n"), charged, total, nc };
+  }
+
+  async function copyRich(html, text) {
+    try {
+      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([text], { type: "text/plain" }),
+        })]);
+        return true;
+      }
+    } catch (e) {}
+    // Older browsers: select a rendered copy and use the legacy copy command.
+    const box = document.createElement("div");
+    box.contentEditable = "true"; box.innerHTML = html;
+    box.style.cssText = "position:fixed;left:-9999px;top:0;background:#fff;color:#000;";
+    document.body.appendChild(box);
+    const range = document.createRange(); range.selectNodeContents(box);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) {}
+    sel.removeAllRanges(); box.remove();
+    return ok;
+  }
+
+  const invPanel = $("inv-panel");
+  let invoice = null;
+  function refreshInvoice() {
+    const from = $("i-from").value, to = $("i-to").value;
+    const s = settings();
+    $("i-last").textContent = s.invoicedThrough
+      ? `Last invoiced through ${longDate(s.invoicedThrough)}. Week 1 is the week of ${longDate(weekOne())}.`
+      : `Nothing marked as invoiced yet. Week 1 is the week of ${longDate(weekOne())}.`;
+    $("i-msg").textContent = !from || !to ? "Choose both dates." : from > to ? "The start date is after the end date." : s.rate == null ? "Enter your hourly rate to include the amount due." : "";
+    invoice = from && to && from <= to ? buildAddendum(from, to) : null;
+    $("i-preview").innerHTML = invoice ? invoice.html : "";
+    $("i-copy").disabled = !invoice;
+    $("i-mark").disabled = !invoice;
+  }
+  function openInvoice() {
+    const s = settings();
+    $("i-from").value = s.invoicedThrough ? iso(addDays(parse(s.invoicedThrough), 1)) : firstDate();
+    $("i-to").value = todayIso();
+    $("i-rate").value = s.rate != null ? fmt(s.rate) : "";
+    $("i-start").value = s.startDate || weekOne();
+    $("i-ok").textContent = "";
+    panel.hidden = true;
+    invPanel.hidden = false;
+    refreshInvoice();
+    invPanel.scrollIntoView({ block: "start" });
+  }
+  $("inv-btn").addEventListener("click", () => (invPanel.hidden ? openInvoice() : (invPanel.hidden = true)));
+  $("i-close").addEventListener("click", () => (invPanel.hidden = true));
+  for (const id of ["i-from", "i-to"]) $(id).addEventListener("change", () => { $("i-ok").textContent = ""; refreshInvoice(); });
+  $("i-rate").addEventListener("change", () => {
+    const v = $("i-rate").value.trim().replace(/[$,\s]/g, "").replace(/\/h(ou)?r$/i, "");
+    if (v === "") delete settings().rate;
+    else if (isFinite(Number(v)) && Number(v) >= 0) settings().rate = Number(v);
+    else { $("i-msg").textContent = "Enter the rate as a number, like 160."; return; }
+    save(); refreshInvoice();
+  });
+  $("i-start").addEventListener("change", () => {
+    const v = $("i-start").value;
+    if (v) settings().startDate = v; else delete settings().startDate;
+    save(); refreshInvoice();
+  });
+  $("i-copy").addEventListener("click", async () => {
+    if (!invoice) return;
+    const ok = await copyRich(invoice.html, invoice.text);
+    $("i-ok").textContent = ok ? `Copied ${invoice.total ? fmt(invoice.total) : 0} hours (${fmt(invoice.charged)} charged). Paste it into your Google Doc.` : "";
+    $("i-msg").textContent = ok ? "" : "Your browser blocked copying. Select the preview below and copy it with Ctrl+C or Cmd+C.";
+  });
+  $("i-mark").addEventListener("click", () => {
+    const to = $("i-to").value;
+    if (!to) return;
+    settings().invoicedThrough = to;
+    save();
+    $("i-from").value = iso(addDays(parse(to), 1));
+    $("i-to").value = todayIso() > $("i-from").value ? todayIso() : $("i-from").value;
+    refreshInvoice();
+    $("i-ok").textContent = `Marked as invoiced through ${longDate(to)}. The next addendum starts ${longDate($("i-from").value)}.`;
+  });
+
   // ---- import ----
   const banner = $("banner");
   $("import-btn").addEventListener("click", () => $("import-file").click());
@@ -742,7 +917,7 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
   function logOut() {
     cfg = null; writeJSON(CFG_KEY, null);
     meta = { sha: null, dirty: false }; writeMeta();
-    state = { version: 1, entries: [], budgets: {} }; writeLocal();
+    state = { version: 1, entries: [], budgets: {}, settings: {} }; writeLocal();
     panel.hidden = true; banner.hidden = true; resetForm(false); render(); setSync();
     setStatus("Logged out. This browser no longer has your timesheet or GitHub details.");
     if (sealed) setLocked(true);
@@ -817,7 +992,7 @@ td.acts { white-space: nowrap; text-align: right; padding-block: 4px; }
   function setLocked(locked) {
     $("login").hidden = !locked;
     for (const el of [$("entry"), $("weeks"), document.querySelector(".tools")]) el.hidden = locked;
-    if (locked) { panel.hidden = true; $("l-pw").focus(); }
+    if (locked) { panel.hidden = true; $("inv-panel").hidden = true; $("l-pw").focus(); }
   }
   $("login-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();

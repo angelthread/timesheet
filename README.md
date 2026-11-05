@@ -43,6 +43,16 @@ From then on, any browser or device that opens the site just asks for the passwo
 - **Remaining budget** = starting budget − charged hours that week. "Not charged" hours don't count.
 - A week's starting budget is the previous week's remaining budget. Type a different number in any week to override it (for example, a top-up). Later weeks carry on from there.
 
+## Invoice addendum
+
+Click **Invoice addendum**, choose the period, and click **Copy addendum**. Paste it into your invoice in Google Docs (the second page works well). It pastes as a formatted table:
+
+- One line per entry: item number, week, date (MM/DD/YYYY), "Item – Description", and hours, with "(no charge)" on not-charged time
+- A subtotal after each week
+- Totals: total hours, discounted hours, hours charged, rate and total due
+
+Set your hourly rate and the date **Week 1** starts once; they're saved with your data. After sending an invoice, click **Mark as invoiced** so the next addendum starts the following day.
+
 ## Downloads
 
 - **Download all (JSON)**: everything, plus computed weekly summaries. You can load it back with **Import JSON**.
